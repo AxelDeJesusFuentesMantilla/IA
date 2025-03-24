@@ -19,7 +19,7 @@ NARANJA = (255, 165, 0)
 PURPURA = (128, 0, 128)
 
 # Fuente
-FUENTE = pygame.font.SysFont('arial', 12)
+FUENTE = pygame.font.SysFont('consolas', 12)
 
 class Nodo:
     def __init__(self, fila, col, ancho, total_filas):
@@ -80,9 +80,9 @@ class Nodo:
     def dibujar(self, ventana, fuente):
         pygame.draw.rect(ventana, self.color, (self.x, self.y, self.ancho, self.ancho))
         if self.f != 0 and self.f != float("inf"):
+            h_texto = fuente.render(f"h:{int(self.h)}", True, NEGRO)
             f_texto = fuente.render(f"f:{int(self.f)}", True, NEGRO)
             g_texto = fuente.render(f"g:{int(self.g)}", True, NEGRO)
-            h_texto = fuente.render(f"h:{int(self.h)}", True, NEGRO)
             ventana.blit(f_texto, (self.x + 1, self.y + 1))
             ventana.blit(g_texto, (self.x + 1, self.y + self.ancho // 2 - 8))
             ventana.blit(h_texto, (self.x + 1, self.y + self.ancho - 16))
@@ -188,7 +188,7 @@ def a_estrella(dibujar, grid, inicio, fin):
     return False
 
 def main(ventana, ancho):
-    FILAS = 30
+    FILAS = 10
     grid = crear_grid(FILAS, ancho)
     inicio = None
     fin = None
