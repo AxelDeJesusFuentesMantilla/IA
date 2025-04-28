@@ -99,7 +99,14 @@ class Nodo:
             if 0 <= nueva_fila < self.total_filas and 0 <= nueva_col < self.total_filas:
                 vecino = grid[nueva_fila][nueva_col]
                 if not vecino.es_pared():
+                    # Si es movimiento diagonal, revisamos bloqueos
+                    if abs(df) == 1 and abs(dc) == 1:
+                        nodo1 = grid[self.fila][self.col + dc]
+                        nodo2 = grid[self.fila + df][self.col]
+                        if nodo1.es_pared() or nodo2.es_pared():
+                            continue  # Bloqueamos movimiento diagonal si hay paredes adyacentes
                     self.vecinos.append((vecino, costo))
+
 
 def crear_grid(filas, ancho):
     grid = []
