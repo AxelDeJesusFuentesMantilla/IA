@@ -1,5 +1,11 @@
 import pygame
 import random
+import numpy as np
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense
 
 # Inicializar Pygame
 pygame.init()
@@ -7,116 +13,194 @@ pygame.init()
 # Dimensiones de la pantalla
 w, h = 800, 400
 pantalla = pygame.display.set_mode((w, h))
-pygame.display.set_caption("Juego: Disparo de Bala, Salto, Nave y Menú")
+pygame.display.set_caption("Juego IA: Disparo, Salto, Nave y Modelos ML")
 
 # Colores
 BLANCO = (255, 255, 255)
 NEGRO = (0, 0, 0)
+VERDE = (0, 255, 0)
+ROJO = (255, 0, 0)
+AZUL = (0, 0, 255)
 
-# Variables del jugador, bala, nave, fondo, etc.
+# --- Variables del juego (sin cambios significativos, excepto nuevas globales para modelos) ---
 jugador = None
 bala = None
 fondo = None
 nave = None
-menu = None
+# menu = None # menu_img y menu_rect no se usaban, los quitamos por ahora para simplificar
 
 # Variables de salto
 salto = False
-salto_altura = 15  # Velocidad inicial de salto
+salto_altura = 15
 gravedad = 1
 en_suelo = True
+jump_initiated_this_frame = False # Para una mejor recolección de datos (opcional pero recomendado)
 
 # Variables de pausa y menú
 pausa = False
 fuente = pygame.font.SysFont('Arial', 24)
+fuente_grande = pygame.font.SysFont('Arial', 30)
 menu_activo = True
-modo_auto = False  # Indica si el modo de juego es automático
+modo_auto = False
+modelo_seleccionado = None # 'dt' para Decision Tree, 'nn' para Neural Network
 
 # Lista para guardar los datos de velocidad, distancia y salto (target)
 datos_modelo = []
 
+# Modelos de ML
+dt_model = None
+nn_model = None
+model_trained_dt = False
+model_trained_nn = False
+
 # Cargar las imágenes
-jugador_frames = [
-    pygame.image.load('assets/sprites/mono_frame_1.png'),
-    pygame.image.load('assets/sprites/mono_frame_2.png'),
-    pygame.image.load('assets/sprites/mono_frame_3.png'),
-    pygame.image.load('assets/sprites/mono_frame_4.png')
-]
+try:
+    jugador_frames = [
+        pygame.image.load('assets/sprites/mono_frame_1.png'),
+        pygame.image.load('assets/sprites/mono_frame_2.png'),
+        pygame.image.load('assets/sprites/mono_frame_3.png'),
+        pygame.image.load('assets/sprites/mono_frame_4.png')
+    ]
+    bala_img = pygame.image.load('assets/sprites/purple_ball.png')
+    fondo_img = pygame.image.load('assets/game/fondo2.png')
+    nave_img = pygame.image.load('assets/game/ufo.png')
+    # menu_img = pygame.image.load('assets/game/menu.png') # No se usa
+except pygame.error as e:
+    print(f"Error al cargar una imagen: {e}")
+    print("Asegúrate de que la carpeta 'assets' está en el mismo directorio que el script y contiene las imágenes.")
+    pygame.quit()
+    exit()
 
-bala_img = pygame.image.load('assets/sprites/purple_ball.png')
-fondo_img = pygame.image.load('assets/game/fondo2.png')
-nave_img = pygame.image.load('assets/game/ufo.png')
-menu_img = pygame.image.load('assets/game/menu.png')
 
-# Escalar la imagen de fondo para que coincida con el tamaño de la pantalla
+# Escalar la imagen de fondo
 fondo_img = pygame.transform.scale(fondo_img, (w, h))
 
-# Crear el rectángulo del jugador y de la bala
-jugador = pygame.Rect(50, h - 100, 32, 48)
+# Crear el rectángulo del jugador, bala, nave
+jugador = pygame.Rect(50, h - 100, 32, 48) # Ajustar alto para mono_frame
 bala = pygame.Rect(w - 50, h - 90, 16, 16)
-nave = pygame.Rect(w - 100, h - 100, 64, 64)
-menu_rect = pygame.Rect(w // 2 - 135, h // 2 - 90, 270, 180)  # Tamaño del menú
+nave = pygame.Rect(w - 100, h - 100, 64, 64) # Ajustar alto para nave
 
 # Variables para la animación del jugador
 current_frame = 0
-frame_speed = 10  # Cuántos frames antes de cambiar a la siguiente imagen
+frame_speed = 10
 frame_count = 0
 
 # Variables para la bala
-velocidad_bala = -10  # Velocidad de la bala hacia la izquierda
+velocidad_bala = -10
 bala_disparada = False
 
 # Variables para el fondo en movimiento
 fondo_x1 = 0
 fondo_x2 = w
 
-# Función para disparar la bala
+# --- Funciones del Juego (disparar_bala, reset_bala, manejar_salto sin cambios) ---
 def disparar_bala():
     global bala_disparada, velocidad_bala
     if not bala_disparada:
-        velocidad_bala = random.randint(-8, -3)  # Velocidad aleatoria negativa para la bala
+        # Velocidad aleatoria negativa para la bala, la hacemos un poco más consistente para el aprendizaje
+        velocidad_bala = random.randint(-15, -5) # Rango de velocidades
+        bala.y = h - 90 - random.randint(0, 20) # Pequeña variación en Y para hacerlo más interesante
         bala_disparada = True
 
-# Función para reiniciar la posición de la bala
 def reset_bala():
     global bala, bala_disparada
-    bala.x = w - 50  # Reiniciar la posición de la bala
+    bala.x = w - 50
     bala_disparada = False
 
-# Función para manejar el salto
 def manejar_salto():
     global jugador, salto, salto_altura, gravedad, en_suelo
-
     if salto:
-        jugador.y -= salto_altura  # Mover al jugador hacia arriba
-        salto_altura -= gravedad  # Aplicar gravedad (reduce la velocidad del salto)
-
-        # Si el jugador llega al suelo, detener el salto
+        jugador.y -= salto_altura
+        salto_altura -= gravedad
         if jugador.y >= h - 100:
             jugador.y = h - 100
             salto = False
-            salto_altura = 15  # Restablecer la velocidad de salto
+            salto_altura = 15
             en_suelo = True
 
-# Función para actualizar el juego
-def update():
+# --- Funciones de ML ---
+def entrenar_modelo_dt():
+    global dt_model, datos_modelo, model_trained_dt
+    if len(datos_modelo) < 50: # Necesitamos suficientes datos
+        print("No hay suficientes datos para entrenar el Árbol de Decisión. Juega en modo manual para recolectar.")
+        model_trained_dt = False
+        return
+
+    # Preparar datos
+    X = np.array([[d[0], d[1]] for d in datos_modelo]) # velocidad_bala, distancia
+    y = np.array([d[2] for d in datos_modelo])         # salto_hecho
+
+    if len(np.unique(y)) < 2:
+        print("Los datos recolectados solo tienen una clase (solo saltos o solo no saltos).")
+        print("Intenta jugar variando tus acciones para obtener datos más diversos.")
+        model_trained_dt = False
+        return
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+    dt_model = DecisionTreeClassifier(random_state=42, max_depth=5, min_samples_leaf=5) # Algunos hiperparámetros
+    dt_model.fit(X_train, y_train)
+
+    y_pred_test = dt_model.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred_test)
+    print(f"Árbol de Decisión entrenado. Precisión en prueba: {accuracy:.2f}")
+    model_trained_dt = True
+
+def entrenar_modelo_nn():
+    global nn_model, datos_modelo, model_trained_nn
+    if len(datos_modelo) < 50:
+        print("No hay suficientes datos para entrenar la Red Neuronal. Juega en modo manual.")
+        model_trained_nn = False
+        return
+    print(datos_modelo)
+
+    X = np.array([[d[0], d[1]] for d in datos_modelo])
+    y = np.array([d[2] for d in datos_modelo])
+
+    if len(np.unique(y)) < 2:
+        print("Los datos recolectados solo tienen una clase para la Red Neuronal.")
+        model_trained_nn = False
+        return
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+
+    nn_model = Sequential([
+        Dense(8, input_dim=2, activation='relu'), # Capa oculta con más neuronas
+        Dense(4, activation='relu'),             # Otra capa oculta
+        Dense(1, activation='sigmoid')
+    ])
+    nn_model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    print("Entrenando Red Neuronal...")
+    nn_model.fit(X_train, y_train, epochs=50, batch_size=16, verbose=0, validation_data=(X_test, y_test)) # Más épocas, verbose=0
+
+    loss, accuracy = nn_model.evaluate(X_test, y_test, verbose=0)
+    print(f"Red Neuronal entrenada. Precisión en prueba: {accuracy:.2f}")
+    model_trained_nn = True
+
+def predecir_salto_dt(velocidad, distancia):
+    if not model_trained_dt or dt_model is None:
+        return 0 # No saltar si no hay modelo
+    features = np.array([[velocidad, distancia]])
+    prediccion = dt_model.predict(features)
+    return prediccion[0]
+
+def predecir_salto_nn(velocidad, distancia):
+    if not model_trained_nn or nn_model is None:
+        return 0 # No saltar si no hay modelo
+    features = np.array([[velocidad, distancia]])
+    prediccion_prob = nn_model.predict(features, verbose=0)
+    return 1 if prediccion_prob[0][0] > 0.5 else 0 # Umbral de decisión
+
+# --- Funciones del Juego (Modificadas/Nuevas) ---
+def update_game_state():
     global bala, velocidad_bala, current_frame, frame_count, fondo_x1, fondo_x2
+    global salto, en_suelo, jump_initiated_this_frame
 
     # Mover el fondo
-    fondo_x1 -= 1
-    fondo_x2 -= 1
-
-    # Si el primer fondo sale de la pantalla, lo movemos detrás del segundo
-    if fondo_x1 <= -w:
-        fondo_x1 = w
-
-    # Si el segundo fondo sale de la pantalla, lo movemos detrás del primero
-    if fondo_x2 <= -w:
-        fondo_x2 = w
-
-    # Dibujar los fondos
-    pantalla.blit(fondo_img, (fondo_x1, 0))
-    pantalla.blit(fondo_img, (fondo_x2, 0))
+    fondo_x1 -= 2
+    fondo_x2 -= 2
+    if fondo_x1 <= -w: fondo_x1 = w
+    if fondo_x2 <= -w: fondo_x2 = w
 
     # Animación del jugador
     frame_count += 1
@@ -124,122 +208,261 @@ def update():
         current_frame = (current_frame + 1) % len(jugador_frames)
         frame_count = 0
 
+    # Mover la bala
+    if bala_disparada:
+        bala.x += velocidad_bala
+    if bala.x < 0:
+        reset_bala()
+        
+        disparar_bala()
+    
+    salto_hecho = 1 if salto else 0
+
+    # Lógica de salto
+    if salto:
+        manejar_salto()
+
+    # Lógica específica del modo automático
+    if modo_auto and en_suelo and bala_disparada:
+        distancia_actual = abs(jugador.right - bala.left)
+        if bala.x > jugador.x - 50:
+            accion_predicha = 0
+            if modelo_seleccionado == 'dt' and model_trained_dt:
+                accion_predicha = predecir_salto_dt(velocidad_bala, distancia_actual)
+            elif modelo_seleccionado == 'nn' and model_trained_nn:
+                accion_predicha = predecir_salto_nn(velocidad_bala, distancia_actual)
+
+            if accion_predicha == 1:
+                salto = True
+                en_suelo = False
+                jump_initiated_this_frame = True  # Registrar el salto iniciado
+
+    # Colisión
+    if jugador.colliderect(bala):
+        reiniciar_juego()
+
+    # Recolección de datos cuando se inicia un salto (manual o automático)
+    if jump_initiated_this_frame and not pausa and bala_disparada:
+        distancia_actual = abs(jugador.right - bala.left)
+        if bala.x < jugador.x + 300 and bala.x > jugador.x - 50:
+            datos_modelo.append((velocidad_bala, distancia_actual, 1))
+            print(f"datos_modelo (salto): {datos_modelo[-1]}")
+
+    # Recolección de datos de no salto en modo manual
+    if not modo_auto and not pausa and en_suelo and bala_disparada and not jump_initiated_this_frame:
+        distancia_actual = abs(jugador.right - bala.left)
+        if bala.x < jugador.x + 300 and bala.x > jugador.x - 50:
+            datos_modelo.append((velocidad_bala, distancia_actual, 0))
+            print(f"datos_modelo (no salto): {datos_modelo[-1]}")
+
+    jump_initiated_this_frame = False  # Reiniciar para el siguiente frame
+
+
+def draw_elements():
+    # Dibujar los fondos
+    pantalla.blit(fondo_img, (fondo_x1, 0))
+    pantalla.blit(fondo_img, (fondo_x2, 0))
+
     # Dibujar el jugador con la animación
     pantalla.blit(jugador_frames[current_frame], (jugador.x, jugador.y))
 
     # Dibujar la nave
     pantalla.blit(nave_img, (nave.x, nave.y))
 
-    # Mover y dibujar la bala
+    # Dibujar la bala
     if bala_disparada:
-        bala.x += velocidad_bala
+        pantalla.blit(bala_img, (bala.x, bala.y))
 
-    # Si la bala sale de la pantalla, reiniciar su posición
-    if bala.x < 0:
-        reset_bala()
+    # Mostrar información en pantalla
+    info_text = f"Datos Recolectados: {len(datos_modelo)}"
+    info_render = fuente.render(info_text, True, NEGRO)
+    pantalla.blit(info_render, (10, 10))
 
-    pantalla.blit(bala_img, (bala.x, bala.y))
+    modo_actual_txt = "Modo: "
+    if modo_auto:
+        modo_actual_txt += f"AUTO ({modelo_seleccionado.upper() if modelo_seleccionado else 'N/A'})"
+        if modelo_seleccionado == 'dt' and not model_trained_dt:
+            modo_actual_txt += " - DT NO ENTRENADO"
+        elif modelo_seleccionado == 'nn' and not model_trained_nn:
+            modo_actual_txt += " - NN NO ENTRENADO"
+    else:
+        modo_actual_txt += "MANUAL"
+    
+    modo_render = fuente.render(modo_actual_txt, True, NEGRO)
+    pantalla.blit(modo_render, (10, 35))
 
-    # Colisión entre la bala y el jugador
-    if jugador.colliderect(bala):
-        print("Colisión detectada!")
-        reiniciar_juego()  # Terminar el juego y mostrar el menú
+    if pausa:
+        texto_pausa = fuente_grande.render("PAUSA", True, ROJO)
+        pausa_rect = texto_pausa.get_rect(center=(w // 2, h // 2))
+        pantalla.blit(texto_pausa, pausa_rect)
 
-# Función para guardar datos del modelo en modo manual
-def guardar_datos():
-    global jugador, bala, velocidad_bala, salto
-    distancia = abs(jugador.x - bala.x)
-    salto_hecho = 1 if salto else 0  # 1 si saltó, 0 si no saltó
-    # Guardar velocidad de la bala, distancia al jugador y si saltó o no
-    datos_modelo.append((velocidad_bala, distancia, salto_hecho))
 
-# Función para pausar el juego y guardar los datos
 def pausa_juego():
     global pausa
     pausa = not pausa
     if pausa:
-        print("Juego pausado. Datos registrados hasta ahora:", datos_modelo)
+        print("Juego pausado. Datos registrados hasta ahora:", len(datos_modelo))
+        # Si quieres ver los datos: print(datos_modelo)
     else:
         print("Juego reanudado.")
 
-# Función para mostrar el menú y seleccionar el modo de juego
 def mostrar_menu():
-    global menu_activo, modo_auto
-    pantalla.fill(NEGRO)
-    texto = fuente.render("Presiona 'A' para Auto, 'M' para Manual, o 'Q' para Salir", True, BLANCO)
-    pantalla.blit(texto, (w // 4, h // 2))
-    pygame.display.flip()
+    # Mueve todas las declaraciones globales necesarias para esta función aquí
+    global menu_activo, modo_auto, modelo_seleccionado, datos_modelo
+    global model_trained_dt, model_trained_nn, dt_model, nn_model # <--- CORRECCIÓN AQUÍ
 
-    while menu_activo:
+    running_menu = True
+    while running_menu:
+        pantalla.fill(NEGRO) # Fondo negro para el menú
+        
+        opciones = [
+            ("MODO DE JUEGO", None, True), # Título
+            ("M - Manual (Recolectar Datos)", "manual", False),
+            ("A - Auto con Árbol de Decisión (DT)", "auto_dt", False),
+            ("N - Auto con Red Neuronal (NN)", "auto_nn", False),
+            ("", None, False), # Espaciador
+            ("ENTRENAMIENTO", None, True), # Título
+            ("T - Entrenar Árbol de Decisión", "train_dt", False),
+            ("Y - Entrenar Red Neuronal", "train_nn", False),
+            ("C - Limpiar Datos Recolectados", "clear_data", False),
+            ("", None, False), # Espaciador
+            ("Q - Salir del Juego", "quit", False)
+        ]
+
+        y_offset = 50
+        for i, (texto, accion, es_titulo) in enumerate(opciones):
+            if es_titulo:
+                render = fuente_grande.render(texto, True, VERDE)
+            else:
+                render = fuente.render(texto, True, BLANCO)
+            
+            text_rect = render.get_rect(center=(w // 2, y_offset))
+            pantalla.blit(render, text_rect)
+            y_offset += 30 if es_titulo else 25
+            
+            if texto == "M - Manual (Recolectar Datos)" and modo_auto == False:
+                 pygame.draw.rect(pantalla, VERDE, text_rect.inflate(10,5), 1)
+            if texto == "A - Auto con Árbol de Decisión (DT)" and modo_auto == True and modelo_seleccionado == 'dt':
+                 pygame.draw.rect(pantalla, VERDE, text_rect.inflate(10,5), 1)
+            if texto == "N - Auto con Red Neuronal (NN)" and modo_auto == True and modelo_seleccionado == 'nn':
+                 pygame.draw.rect(pantalla, VERDE, text_rect.inflate(10,5), 1)
+
+
+        # Mostrar estado de entrenamiento de modelos
+        dt_status = f"DT: {'Entrenado' if model_trained_dt else 'No Entrenado'} ({len(datos_modelo)} datos)"
+        nn_status = f"NN: {'Entrenado' if model_trained_nn else 'No Entrenado'} ({len(datos_modelo)} datos)"
+        dt_render = fuente.render(dt_status, True, AZUL if model_trained_dt else ROJO)
+        nn_render = fuente.render(nn_status, True, AZUL if model_trained_nn else ROJO)
+        pantalla.blit(dt_render, (10, h - 50))
+        pantalla.blit(nn_render, (10, h - 25))
+
+        pygame.display.flip()
+
         for evento in pygame.event.get():
             if evento.type == pygame.QUIT:
                 pygame.quit()
                 exit()
             if evento.type == pygame.KEYDOWN:
-                if evento.key == pygame.K_a:
-                    modo_auto = True
-                    menu_activo = False
-                elif evento.key == pygame.K_m:
+                if evento.key == pygame.K_m: # Manual
                     modo_auto = False
+                    modelo_seleccionado = None
                     menu_activo = False
+                    running_menu = False
+                elif evento.key == pygame.K_a: # Auto DT
+                    if model_trained_dt:
+                        modo_auto = True
+                        modelo_seleccionado = 'dt'
+                        menu_activo = False
+                        running_menu = False
+                    else:
+                        print("Entrena el Árbol de Decisión primero (T).")
+                elif evento.key == pygame.K_n: # Auto NN
+                    if model_trained_nn:
+                        modo_auto = True
+                        modelo_seleccionado = 'nn'
+                        menu_activo = False
+                        running_menu = False
+                    else:
+                        print("Entrena la Red Neuronal primero (Y).")
+                elif evento.key == pygame.K_t: # Train DT
+                    print("Intentando entrenar Árbol de Decisión...")
+                    entrenar_modelo_dt()
+                elif evento.key == pygame.K_y: # Train NN
+                    print("Intentando entrenar Red Neuronal...")
+                    entrenar_modelo_nn()
+                elif evento.key == pygame.K_c: # Clear Data
+                    datos_modelo = []
+                    model_trained_dt = False # Resetear estado de entrenamiento
+                    model_trained_nn = False
+                    dt_model = None # Borrar modelos
+                    nn_model = None
+                    # La declaración global específica de este bloque ya no es necesaria aquí
+                    # porque se hizo al inicio de la función.
+                    print("Datos recolectados y modelos borrados.")
                 elif evento.key == pygame.K_q:
-                    print("Juego terminado. Datos recopilados:", datos_modelo)
+                    print("Juego terminado. Datos finales recopilados:", len(datos_modelo))
                     pygame.quit()
                     exit()
+    # Al salir del menú, si no es para quitar el juego, disparamos la primera bala
+    if not bala_disparada and not menu_activo: # Si el juego va a empezar
+        disparar_bala()
 
-# Función para reiniciar el juego tras la colisión
 def reiniciar_juego():
     global menu_activo, jugador, bala, nave, bala_disparada, salto, en_suelo
-    menu_activo = True  # Activar de nuevo el menú
-    jugador.x, jugador.y = 50, h - 100  # Reiniciar posición del jugador
-    bala.x = w - 50  # Reiniciar posición de la bala
-    nave.x, nave.y = w - 100, h - 100  # Reiniciar posición de la nave
+    # No limpiamos datos_modelo aquí para que se acumulen entre partidas
+    print(f"Partida terminada. Total datos recopilados: {len(datos_modelo)}")
+    
+    menu_activo = True
+    jugador.x, jugador.y = 50, h - 100
+    bala.x = w - 50
+    nave.x, nave.y = w - 100, h - 100
     bala_disparada = False
     salto = False
     en_suelo = True
-    # Mostrar los datos recopilados hasta el momento
-    print("Datos recopilados para el modelo: ", datos_modelo)
-    mostrar_menu()  # Mostrar el menú de nuevo para seleccionar modo
+    # No llamamos a mostrar_menu() directamente, el bucle principal lo hará
 
 def main():
-    global salto, en_suelo, bala_disparada
+    global salto, en_suelo, bala_disparada, menu_activo, jump_initiated_this_frame
 
     reloj = pygame.time.Clock()
-    mostrar_menu()  # Mostrar el menú al inicio
+    
     correr = True
-
     while correr:
+        if menu_activo:
+            mostrar_menu() # Esto es un bucle en sí mismo hasta que se elige una opción
+
         for evento in pygame.event.get():
             if evento.type == pygame.QUIT:
                 correr = False
             if evento.type == pygame.KEYDOWN:
-                if evento.key == pygame.K_SPACE and en_suelo and not pausa:  # Detectar la tecla espacio para saltar
-                    salto = True
-                    en_suelo = False
-                if evento.key == pygame.K_p:  # Presiona 'p' para pausar el juego
-                    pausa_juego()
-                if evento.key == pygame.K_q:  # Presiona 'q' para terminar el juego
-                    print("Juego terminado. Datos recopilados:", datos_modelo)
-                    pygame.quit()
-                    exit()
+                if evento.key == pygame.K_ESCAPE: # Tecla ESC para volver al menú
+                    global pausa # Acceso a pausa para desactivarla si estaba activa
+                    pausa = False
+                    menu_activo = True
+                if not pausa and not modo_auto: # Solo control manual si no está en pausa y no es auto
+                    if evento.key == pygame.K_SPACE and en_suelo:
+                        salto = True
+                        en_suelo = False
+                        jump_initiated_this_frame = True # Marcar que el salto se inició en este frame
+                if evento.key == pygame.K_p:
+                    if not menu_activo : # No pausar si estamos en el menú
+                        pausa_juego()
+                # La tecla Q para salir ahora está manejada en el menú
+                # y una global para salir del juego principal.
+                if evento.key == pygame.K_q: # Salir directamente
+                    correr = False
 
-        if not pausa:
-            # Modo manual: el jugador controla el salto
-            if not modo_auto:
-                if salto:
-                    manejar_salto()
-                # Guardar los datos si estamos en modo manual
-                guardar_datos()
 
-            # Actualizar el juego
-            if not bala_disparada:
-                disparar_bala()
-            update()
+        if not menu_activo and not pausa:
+            update_game_state() # Actualiza la lógica del juego
+            draw_elements()     # Dibuja todo
+        elif not menu_activo and pausa: # Si está pausado pero no en menú, solo dibujar elementos estáticos y mensaje
+            draw_elements() # Dibuja el estado actual, el mensaje de pausa se superpone
 
-        # Actualizar la pantalla
         pygame.display.flip()
-        reloj.tick(30)  # Limitar el juego a 30 FPS
+        reloj.tick(30)
 
+    print("Saliendo del juego. Datos finales recopilados:", len(datos_modelo))
     pygame.quit()
 
 if __name__ == "__main__":

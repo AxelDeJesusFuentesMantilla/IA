@@ -1,0 +1,429 @@
+import pygame
+import random
+import numpy as np
+import os
+import joblib
+from datetime import datetime
+from tensorflow.keras.models import save_model, load_model
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense
+
+# Inicializar Pygame
+pygame.init()
+
+# Dimensiones de la pantalla
+w, h = 800, 400
+pantalla = pygame.display.set_mode((w, h))
+pygame.display.set_caption("Juego IA: Disparo, Salto, Nave y Modelos ML")
+
+# Colores
+BLANCO = (255, 255, 255)
+NEGRO = (0, 0, 0)
+VERDE = (0, 255, 0)
+ROJO = (255, 0, 0)
+AZUL = (0, 0, 255)
+
+# Variables del juego
+jugador = None
+bala = None
+fondo = None
+nave = None
+
+# Variables de salto
+salto = False
+salto_altura = 15
+gravedad = 1
+en_suelo = True
+jump_initiated_this_frame = False
+
+# Variables de pausa y menú
+pausa = False
+fuente = pygame.font.SysFont('Arial', 24)
+fuente_grande = pygame.font.SysFont('Arial', 30)
+menu_activo = True
+modo_auto = False
+modelo_seleccionado = None
+
+# Datos y modelos
+datos_modelo = []
+dt_model = None
+nn_model = None
+model_trained_dt = False
+model_trained_nn = False
+modelo_dt_path = 'decision_tree_model.pkl'
+modelo_nn_path = 'neural_network_model.h5'
+ultimo_entrenamiento_dt = None
+ultimo_entrenamiento_nn = None
+
+# Cargar las imágenes
+try:
+    jugador_frames = [
+        pygame.image.load('assets/sprites/mono_frame_1.png'),
+        pygame.image.load('assets/sprites/mono_frame_2.png'),
+        pygame.image.load('assets/sprites/mono_frame_3.png'),
+        pygame.image.load('assets/sprites/mono_frame_4.png')
+    ]
+    bala_img = pygame.image.load('assets/sprites/purple_ball.png')
+    fondo_img = pygame.image.load('assets/game/fondo2.png')
+    nave_img = pygame.image.load('assets/game/ufo.png')
+except pygame.error as e:
+    print(f"Error al cargar una imagen: {e}")
+    print("Asegúrate de que la carpeta 'assets' está en el mismo directorio que el script y contiene las imágenes.")
+    pygame.quit()
+    exit()
+
+# Escalar la imagen de fondo
+fondo_img = pygame.transform.scale(fondo_img, (w, h))
+
+# Crear rectángulos
+jugador = pygame.Rect(50, h - 100, 32, 48)
+bala = pygame.Rect(w - 50, h - 90, 16, 16)
+nave = pygame.Rect(w - 100, h - 100, 64, 64)
+
+# Variables de animación
+current_frame = 0
+frame_speed = 10
+frame_count = 0
+
+# Variables de juego
+velocidad_bala = -10
+bala_disparada = False
+fondo_x1 = 0
+fondo_x2 = w
+
+# Funciones del juego
+def disparar_bala():
+    global bala_disparada, velocidad_bala
+    if not bala_disparada:
+        velocidad_bala = random.randint(-15, -5)
+        bala.y = h - 90 - random.randint(0, 20)
+        bala_disparada = True
+
+def reset_bala():
+    global bala, bala_disparada
+    bala.x = w - 50
+    bala_disparada = False
+
+def manejar_salto():
+    global jugador, salto, salto_altura, gravedad, en_suelo
+    if salto:
+        jugador.y -= salto_altura
+        salto_altura -= gravedad
+        if jugador.y >= h - 100:
+            jugador.y = h - 100
+            salto = False
+            salto_altura = 15
+            en_suelo = True
+
+# Funciones de ML
+def entrenar_modelo_dt():
+    global dt_model, datos_modelo, model_trained_dt, ultimo_entrenamiento_dt
+    if len(datos_modelo) < 50:
+        print("No hay suficientes datos para entrenar el Árbol de Decisión.")
+        return False
+
+    X = np.array([[d[0], d[1]] for d in datos_modelo])
+    y = np.array([d[2] for d in datos_modelo])
+
+    if len(np.unique(y)) < 2:
+        print("Datos no balanceados para entrenamiento.")
+        return False
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+    dt_model = DecisionTreeClassifier(random_state=42, max_depth=5, min_samples_leaf=5)
+    dt_model.fit(X_train, y_train)
+
+    y_pred_test = dt_model.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred_test)
+    print(f"Precisión DT: {accuracy:.2f}")
+    
+    try:
+        joblib.dump(dt_model, modelo_dt_path)
+        ultimo_entrenamiento_dt = datetime.fromtimestamp(os.path.getmtime(modelo_dt_path))
+        model_trained_dt = True
+        return True
+    except Exception as e:
+        print(f"Error guardando DT: {e}")
+        return False
+
+def entrenar_modelo_nn():
+    global nn_model, datos_modelo, model_trained_nn, ultimo_entrenamiento_nn
+    if len(datos_modelo) < 50:
+        print("No hay suficientes datos para entrenar la Red Neuronal.")
+        return False
+
+    X = np.array([[d[0], d[1]] for d in datos_modelo])
+    y = np.array([d[2] for d in datos_modelo])
+
+    if len(np.unique(y)) < 2:
+        print("Datos no balanceados para entrenamiento.")
+        return False
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+    nn_model = Sequential([
+        Dense(8, input_dim=2, activation='relu'),
+        Dense(4, activation='relu'),
+        Dense(1, activation='sigmoid')
+    ])
+    nn_model.compile(optimizer='adam', loss='binary_crossentropy', metrics=['accuracy'])
+    nn_model.fit(X_train, y_train, epochs=50, batch_size=16, verbose=0, validation_data=(X_test, y_test))
+
+    loss, accuracy = nn_model.evaluate(X_test, y_test, verbose=0)
+    print(f"Precisión NN: {accuracy:.2f}")
+    
+    try:
+        save_model(nn_model, modelo_nn_path)
+        ultimo_entrenamiento_nn = datetime.fromtimestamp(os.path.getmtime(modelo_nn_path))
+        model_trained_nn = True
+        return True
+    except Exception as e:
+        print(f"Error guardando NN: {e}")
+        return False
+
+def cargar_modelos_guardados():
+    global dt_model, nn_model, model_trained_dt, model_trained_nn, ultimo_entrenamiento_dt, ultimo_entrenamiento_nn
+    
+    # Cargar Árbol de Decisión
+    if os.path.exists(modelo_dt_path):
+        try:
+            dt_model = joblib.load(modelo_dt_path)
+            model_trained_dt = True
+            ultimo_entrenamiento_dt = datetime.fromtimestamp(os.path.getmtime(modelo_dt_path))
+            print(f"Modelo DT cargado (Entrenado el: {ultimo_entrenamiento_dt.strftime('%d/%m/%Y %H:%M')})")
+        except Exception as e:
+            print(f"Error cargando DT: {e}")
+            model_trained_dt = False
+
+    # Cargar Red Neuronal
+    if os.path.exists(modelo_nn_path):
+        try:
+            nn_model = load_model(modelo_nn_path)
+            model_trained_nn = True
+            ultimo_entrenamiento_nn = datetime.fromtimestamp(os.path.getmtime(modelo_nn_path))
+            print(f"Modelo NN cargado (Entrenado el: {ultimo_entrenamiento_nn.strftime('%d/%m/%Y %H:%M')})")
+        except Exception as e:
+            print(f"Error cargando NN: {e}")
+            model_trained_nn = False
+
+def manejar_opcion_auto(tipo_modelo):
+    global modo_auto, modelo_seleccionado
+    modelo_info = {
+        'dt': ('Árbol de Decisión', modelo_dt_path, ultimo_entrenamiento_dt),
+        'nn': ('Red Neuronal', modelo_nn_path, ultimo_entrenamiento_nn)
+    }[tipo_modelo]
+    
+    nombre, path, fecha = modelo_info
+    modelo_valido = False
+    
+    if tipo_modelo == 'dt' and model_trained_dt:
+        modelo_valido = True
+    elif tipo_modelo == 'nn' and model_trained_nn:
+        modelo_valido = True
+
+    if not modelo_valido and os.path.exists(path):
+        cargar_modelos_guardados()
+        modelo_valido = (tipo_modelo == 'dt' and model_trained_dt) or (tipo_modelo == 'nn' and model_trained_nn)
+
+    # Interfaz de selección
+    pantalla.fill(NEGRO)
+    mensaje = f"Modelo {nombre}"
+    if modelo_valido:
+        mensaje += f"\nEntrenado: {fecha.strftime('%d/%m/%Y %H:%M')}" if fecha else ""
+        opciones = ["[U] Usar modelo", "[E] Entrenar nuevo"]
+    else:
+        mensaje += " no disponible"
+        opciones = ["[E] Entrenar nuevo"]
+        if os.path.exists(path):
+            opciones.append("[C] Cargar modelo guardado")
+
+    # Renderizar texto
+    texto_principal = fuente_grande.render(mensaje, True, VERDE if modelo_valido else ROJO)
+    pantalla.blit(texto_principal, texto_principal.get_rect(center=(w//2, h//2 - 50)))
+    
+    y_offset = h//2
+    for opcion in opciones:
+        texto = fuente.render(opcion, True, BLANCO)
+        pantalla.blit(texto, texto.get_rect(center=(w//2, y_offset)))
+        y_offset += 50
+    
+    pygame.display.flip()
+
+    # Manejar entrada
+    esperando = True
+    while esperando:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                exit()
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_u and modelo_valido:
+                    modo_auto = True
+                    modelo_seleccionado = tipo_modelo
+                    esperando = False
+                elif event.key == pygame.K_e:
+                    if tipo_modelo == 'dt':
+                        if entrenar_modelo_dt():
+                            modelo_seleccionado = tipo_modelo
+                            modo_auto = True
+                    else:
+                        if entrenar_modelo_nn():
+                            modelo_seleccionado = tipo_modelo
+                            modo_auto = True
+                    esperando = False
+                elif event.key == pygame.K_c and os.path.exists(path):
+                    cargar_modelos_guardados()
+                    modelo_valido = (tipo_modelo == 'dt' and model_trained_dt) or (tipo_modelo == 'nn' and model_trained_nn)
+                    esperando = False
+
+
+def pausa_juego():
+    global pausa
+    pausa = not pausa
+    if pausa:
+        print("Juego pausado. Datos registrados hasta ahora:", len(datos_modelo))
+        # Si quieres ver los datos: print(datos_modelo)
+    else:
+        print("Juego reanudado.")
+
+
+def mostrar_menu():
+    global menu_activo, modo_auto, modelo_seleccionado, datos_modelo
+    global model_trained_dt, model_trained_nn, dt_model, nn_model
+
+    running_menu = True
+    while running_menu:
+        pantalla.fill(NEGRO)
+        
+        opciones = [
+            ("MODO DE JUEGO", None, True),
+            ("M - Manual (Recolectar Datos)", "manual", False),
+            ("A - Auto con Árbol de Decisión (DT)", "auto_dt", False),
+            ("N - Auto con Red Neuronal (NN)", "auto_nn", False),
+            ("", None, False),
+            ("ENTRENAMIENTO", None, True),
+            ("T - Entrenar Árbol de Decisión", "train_dt", False),
+            ("Y - Entrenar Red Neuronal", "train_nn", False),
+            ("C - Limpiar Datos Recolectados", "clear_data", False),
+            ("", None, False),
+            ("Q - Salir del Juego", "quit", False)
+        ]
+
+        y_offset = 50
+        for i, (texto, accion, es_titulo) in enumerate(opciones):
+            if es_titulo:
+                render = fuente_grande.render(texto, True, VERDE)
+            else:
+                render = fuente.render(texto, True, BLANCO)
+            
+            text_rect = render.get_rect(center=(w // 2, y_offset))
+            pantalla.blit(render, text_rect)
+            y_offset += 30 if es_titulo else 25
+
+        # Mostrar estado de modelos
+        dt_status = f"DT: {'Entrenado' if model_trained_dt else 'No Entrenado'} ({len(datos_modelo)} datos)"
+        nn_status = f"NN: {'Entrenado' if model_trained_nn else 'No Entrenado'} ({len(datos_modelo)} datos)"
+        pantalla.blit(fuente.render(dt_status, True, AZUL if model_trained_dt else ROJO), (10, h - 50))
+        pantalla.blit(fuente.render(nn_status, True, AZUL if model_trained_nn else ROJO), (10, h - 25))
+
+        pygame.display.flip()
+
+        for evento in pygame.event.get():
+            if evento.type == pygame.QUIT:
+                pygame.quit()
+                exit()
+            if evento.type == pygame.KEYDOWN:
+                if evento.key == pygame.K_m:
+                    modo_auto = False
+                    modelo_seleccionado = None
+                    menu_activo = False
+                    running_menu = False
+                elif evento.key == pygame.K_a:
+                    manejar_opcion_auto('dt')
+                    menu_activo = False
+                    running_menu = False
+                elif evento.key == pygame.K_n:
+                    manejar_opcion_auto('nn')
+                    menu_activo = False
+                    running_menu = False
+                elif evento.key == pygame.K_t:
+                    print("Entrenando Árbol de Decisión...")
+                    entrenar_modelo_dt()
+                elif evento.key == pygame.K_y:
+                    print("Entrenando Red Neuronal...")
+                    entrenar_modelo_nn()
+                elif evento.key == pygame.K_c:
+                    datos_modelo = []
+                    model_trained_dt = False
+                    model_trained_nn = False
+                    dt_model = None
+                    nn_model = None
+                    print("Datos y modelos reiniciados.")
+                elif evento.key == pygame.K_q:
+                    pygame.quit()
+                    exit()
+
+    if not bala_disparada and not menu_activo:
+        disparar_bala()
+
+def reiniciar_juego():
+    global menu_activo, jugador, bala, nave, bala_disparada, salto, en_suelo
+    # No limpiamos datos_modelo aquí para que se acumulen entre partidas
+    print(f"Partida terminada. Total datos recopilados: {len(datos_modelo)}")
+    
+    menu_activo = True
+    jugador.x, jugador.y = 50, h - 100
+    bala.x = w - 50
+    nave.x, nave.y = w - 100, h - 100
+    bala_disparada = False
+    salto = False
+    en_suelo = True
+    # No llamamos a mostrar_menu() directamente, el bucle principal lo hará
+
+def main():
+    global salto, en_suelo, bala_disparada, menu_activo, jump_initiated_this_frame
+
+    reloj = pygame.time.Clock()
+    correr = True
+    while correr:
+        if menu_activo:
+            mostrar_menu()
+
+        for evento in pygame.event.get():
+            if evento.type == pygame.QUIT:
+                correr = False
+            if evento.type == pygame.KEYDOWN:
+                if evento.key == pygame.K_ESCAPE:
+                    global pausa
+                    pausa = False
+                    menu_activo = True
+                if not pausa and not modo_auto:
+                    if evento.key == pygame.K_SPACE and en_suelo:
+                        salto = True
+                        en_suelo = False
+                        jump_initiated_this_frame = True
+                if evento.key == pygame.K_p:
+                    if not menu_activo:
+                        pausa_juego()
+                if evento.key == pygame.K_q:
+                    correr = False
+
+        if not menu_activo and not pausa:
+            update_game_state()
+            draw_elements()
+        elif not menu_activo and pausa:
+            draw_elements()
+
+        pygame.display.flip()
+        reloj.tick(30)
+
+    print("Saliendo del juego. Datos finales recopilados:", len(datos_modelo))
+    pygame.quit()
+
+# Cargar modelos al iniciar
+cargar_modelos_guardados()
+
+if __name__ == "__main__":
+    main()
