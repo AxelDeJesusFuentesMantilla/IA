@@ -93,14 +93,14 @@ fondo_x2 = w
 def disparar_bala():
     global bala_disparada, velocidad_bala
     if not bala_disparada:
-        velocidad_bala = random.randint(-8, -3)  # Velocidad aleatoria negativa para la bala
+        velocidad_bala = random.randint(-5, -1)  # Velocidad aleatoria negativa para la bala
         bala_disparada = True
         
 # Funcion para disparar la bala2
 def disparar_bala2():
     global bala_disparada2, velocidad_bala2
     if not bala_disparada2:
-        velocidad_bala2 = 5  # Velocidad aleatoria negativa para la bala
+        velocidad_bala2 = 4  # Velocidad aleatoria negativa para la bala
         bala_disparada2 = True
 
 # Función para reiniciar la posición de la bala
@@ -262,6 +262,10 @@ def mostrar_menu():
                     menu_activo = False
                 elif evento.key == pygame.K_m:
                     modo_auto = False
+                    datos_modelo.clear()  # Limpiar dataset
+                    global modelo
+                    modelo =  KNeighborsClassifier(n_neighbors=3)
+                    print("Modo manual activado. Datos anteriores y modelo reiniciados.")
                     menu_activo = False
                 elif evento.key == pygame.K_q:
                     print("Juego terminado. Datos recopilados:", datos_modelo)
@@ -287,8 +291,14 @@ def reiniciar_juego():
     salto = False
     en_suelo = True
     # Mostrar los datos recopilados hasta el momento
-    print("Datos recopilados para el modelo: ", datos_modelo)
+    for dato in datos_modelo:
+        print("Datos del modelo: ",len(datos_modelo))
+        print("Datos recopilados: ", " ", dato)
+    #print("Datos recopilados para el modelo: ", datos_modelo)
     mostrar_menu()  # Mostrar el menú de nuevo para seleccionar modo
+    
+    
+
     
     
 # Cambios realizados para el programa phaser en python -------------------

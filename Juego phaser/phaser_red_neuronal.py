@@ -93,14 +93,14 @@ fondo_x2 = w
 def disparar_bala():
     global bala_disparada, velocidad_bala
     if not bala_disparada:
-        velocidad_bala = random.randint(-8, -3)  # Velocidad aleatoria negativa para la bala
+        velocidad_bala = random.randint(-5, -3)  # Velocidad aleatoria negativa para la bala
         bala_disparada = True
         
 # Funcion para disparar la bala2
 def disparar_bala2():
     global bala_disparada2, velocidad_bala2
     if not bala_disparada2:
-        velocidad_bala2 = 5  # Velocidad aleatoria negativa para la bala
+        velocidad_bala2 = 4  # Velocidad aleatoria negativa para la bala
         bala_disparada2 = True
 
 # Función para reiniciar la posición de la bala
@@ -231,7 +231,7 @@ def guardar_datos():
     
     # Guardar velocidad de la bala, distancia al jugador y si saltó o no
     datos_modelo.append((velocidad_bala, distancia, salto_hecho, velocidad_bala2, distancia2, delantero_hecho))
-
+    
 # Función para pausar el juego y guardar los datos
 def pausa_juego():
     global pausa
@@ -262,7 +262,12 @@ def mostrar_menu():
                     menu_activo = False
                 elif evento.key == pygame.K_m:
                     modo_auto = False
+                    datos_modelo.clear()  # Limpiar dataset
+                    global modelo
+                    modelo = MLPClassifier(hidden_layer_sizes=(10, 10), max_iter=1000)  # Reiniciar modelo
+                    print("Modo manual activado. Datos anteriores y modelo reiniciados.")
                     menu_activo = False
+                    
                 elif evento.key == pygame.K_q:
                     print("Juego terminado. Datos recopilados:", datos_modelo)
                     pygame.quit()
@@ -287,7 +292,9 @@ def reiniciar_juego():
     salto = False
     en_suelo = True
     # Mostrar los datos recopilados hasta el momento
-    print("Datos recopilados para el modelo: ", datos_modelo)
+    for dato in datos_modelo:
+        print("Datos recopilados: ",len(datos_modelo), " ", dato)
+    #print("Datos recopilados para el modelo: ", len(datos_modelo), " ", datos_modelo)
     mostrar_menu()  # Mostrar el menú de nuevo para seleccionar modo
     
     
@@ -299,7 +306,7 @@ modelo_nn_delantero = None  # Se inicializa el modelo de red neuronal como None
 def entrenar_modelo():
     global modelo_nn, modelo_nn_delantero
 
-    if len(datos_modelo) < 30:
+    if len(datos_modelo) <10:
         print("No hay suficientes datos para entrenar.")
         return
 

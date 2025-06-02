@@ -263,6 +263,10 @@ def mostrar_menu():
                     menu_activo = False
                 elif evento.key == pygame.K_m:
                     modo_auto = False
+                    datos_modelo.clear()  # Limpiar dataset
+                    global modelo
+                    modelo = DecisionTreeClassifier()# Reiniciar modelo
+                    print("Modo manual activado. Datos anteriores y modelo reiniciados.")
                     menu_activo = False
                 elif evento.key == pygame.K_q:
                     print("Juego terminado. Datos recopilados:", datos_modelo)

@@ -195,7 +195,7 @@ def a_estrella(dibujar, grid, inicio, fin):
     return False
 
 def main(ventana, ancho):
-    FILAS = 10
+    FILAS = 11
     grid = crear_grid(FILAS, ancho)
     inicio = None
     fin = None
